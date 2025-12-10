@@ -1,0 +1,831 @@
+substitutions:
+  name: hood
+  friendly_name: hood
+  friendly_name_short: hood
+  device_ip: 192.168.0.33
+  version: "08.12.2025"
+  reboot_timeout: 180min
+  led_delay_time: 2s
+  wifi_25_icon: "\U0000e931"  # wifi signal from 25% to 1%
+  wifi_50_icon: "\U0000e932" # wifi signal from 50% to 25%
+  wifi_75_icon: "\U0000e933" # wifi signal from 75% to 50%
+  wifi_100_icon: "\U0000e934" # wifi signal from 100% to 75% or disable
+  up_icon:  "\U0000e91f" # стрелка вверх
+  down_icon:  "\U0000e920" # стрелка вниз
+  fan_icon:  "\U0000e926" # fan
+  humidity_icon:  "\U0000e938" # humidity 
+  temperature_icon:  "\U0000e939" # temperature 
+  rtm_pin: GPIO3
+  rtm_num_leds: 25
+
+  one_wire_pin: GPIO23
+  sda1: GPIO19
+  scl1: GPIO15
+
+  gas_sensor_pin: GPIO27
+  timer_button_pin: GPIO36
+  down_button_pin: GPIO39
+  up_button_pin: GPIO35
+  light_button_pin: GPIO34
+
+  led_timer_pin: GPIO26
+  led_down_pin: GPIO33
+  led_up_pin: GPIO25
+  led_light_pin: GPIO32
+  led_ws2812_pin: GPIO3
+
+  rtttl_pin: GPIO5
+  light_switch_pin: GPIO1
+  relay1_switch_pin: GPIO17
+  relay2_switch_pin: GPIO18
+  relay3_switch_pin: GPIO21
+  relay4_switch_pin: GPIO22
+
+  segment1_pin: GPIO16
+  segment2_pin: GPIO13
+  segment3_pin: GPIO14
+  segment4_pin: GPIO4
+  segment5_pin: GPIO0
+  segment6_pin: GPIO2
+  segment7_pin: GPIO12
+
+#<<: !include attach/common/esphome.yaml 
+<<: !include attach/common/esp/wroom32_idf.yaml
+<<: !include attach/common/logger/debug.yaml
+<<: !include attach/common/api.yaml
+<<: !include attach/common/ota.yaml
+<<: !include attach/common/wifi.yaml
+<<: !include attach/common/web/web_server3.yaml
+<<: !include attach/common/bus/i2c_a.yaml
+
+packages:
+  common: !include attach/packages/standart.yaml
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  name_add_mac_suffix: false
+  project:
+    name: esphome.${friendly_name}
+    version: ${version}
+  on_boot:
+    - priority: 400.0
+      then:
+        - rtttl.play: 'TuneUp:d=4,o=5,b=140:8c,8e,8g,4c6,8p'
+        - if:       
+            condition:
+              and:
+                - binary_sensor.is_off: gas_sensor
+                - switch.is_on: auto_light
+            then:
+              - light.turn_on:
+                  id: ${friendly_name_short}
+                  effect: "Random Twinkle Effect With Custom Values"
+                  brightness: 80%
+            else:
+              - if:       
+                  condition:
+                    and:
+                      - binary_sensor.is_on: gas_sensor
+                      - switch.is_on: auto_light
+                  then:
+                    - light.turn_on:
+                        id: ${friendly_name_short}
+                        effect: "None"
+                        brightness: 90%
+                  else:
+                    - light.turn_off:
+                        id: ${friendly_name_short}
+globals: # Переменная значения таймера в секундах
+  - id: timer_duration_value
+    type: int
+    restore_value: no
+    initial_value: "0"
+  - id: timer_step
+    type: int
+    restore_value: no
+    initial_value: '0'  # 0 = 0 мин, 1 = 10 мин, …, 6 = 60 мин
+sensor:
+  - platform: dallas_temp
+    address: 0x003c01f09516a928
+    name: ds18 in
+    id: ds18_in
+    update_interval: 10s
+    on_value:
+      then:
+        - if:       
+            condition:
+              and:
+                - binary_sensor.is_on: gas_sensor
+                - switch.is_on: auto_hood
+                - lambda: 'return (id(ds18_in).state - id(ds18_out).state) >= 5 ;'
+            then:
+              - binary_sensor.template.publish:
+                  id: high_temp
+                  state: true
+        - if:       
+            condition:
+              and:
+                - binary_sensor.is_on: gas_sensor
+                - switch.is_on: auto_hood
+                - lambda: 'return (id(ds18_in).state - id(ds18_out).state) >= 10 ;'
+            then:
+              - switch.turn_off: fan_speed2
+        - if:       
+            condition:
+              and:
+                - binary_sensor.is_on: high_temp
+                - binary_sensor.is_on: gas_sensor
+                - lambda: 'return (id(ds18_in).state - id(ds18_out).state) < 2 ;'
+            then:
+              - binary_sensor.template.publish:
+                  id: high_temp
+                  state: false
+  - platform: dallas_temp
+    address: 0x2001212f12513f28 # 0x2001212f12513f28
+    name: ds18 out
+    id: ds18_out
+    update_interval: 10s
+rtttl:
+  output: rtttl_out                              # Зуммер
+  id: my_rtttl
+  gain: 0.1
+one_wire:
+  - platform: gpio
+    pin: ${one_wire_pin}
+
+switch:
+  - platform: template
+    name: Fan Speed0
+    id: fan_speed0
+    optimistic: true
+    turn_on_action:
+      then:
+        - switch.turn_off: fan_speed1
+        - switch.turn_off: fan_speed2
+        - switch.turn_off: fan_speed3
+        - switch.turn_off: fan_speed4
+        - switch.turn_on: segment1
+        - switch.turn_on: segment2
+        - switch.turn_on: segment3
+        - switch.turn_on: segment5
+        - switch.turn_on: segment6
+        - switch.turn_on: segment7
+        - delay: 2s
+        - switch.turn_off: fan_speed0
+    turn_off_action: 
+      then:  
+        - switch.turn_off: segment1
+        - switch.turn_off: segment2
+        - switch.turn_off: segment3
+        - switch.turn_off: segment5
+        - switch.turn_off: segment6
+        - switch.turn_off: segment7
+  - platform: gpio
+    name: Fan Speed1
+    id: fan_speed1
+    interlock: &interlock_group [fan_speed0, fan_speed1, fan_speed2, fan_speed3, fan_speed4]
+    interlock_wait_time: 200ms
+    pin:
+      number: ${relay1_switch_pin}
+      inverted: false
+    on_turn_on: 
+      then:
+        - switch.turn_off: fan_speed0
+        - switch.turn_on: segment3
+        - switch.turn_on: segment6
+    on_turn_off: 
+      then:
+        - switch.turn_off: segment3
+        - switch.turn_off: segment6
+  - platform: gpio
+    name: Fan Speed2
+    id: fan_speed2
+    interlock: *interlock_group
+    interlock_wait_time: 200ms
+    pin:
+      number: ${relay2_switch_pin}
+      inverted: false
+    on_turn_on: 
+      then:
+        - switch.turn_off: fan_speed0
+        - switch.turn_on: segment1
+        - switch.turn_on: segment3
+        - switch.turn_on: segment4
+        - switch.turn_on: segment5
+        - switch.turn_on: segment7
+    on_turn_off: 
+      then:
+        - switch.turn_off: segment1
+        - switch.turn_off: segment3
+        - switch.turn_off: segment4
+        - switch.turn_off: segment5
+        - switch.turn_off: segment7
+  - platform: gpio
+    name: Fan Speed3
+    id: fan_speed3
+    interlock: *interlock_group
+    interlock_wait_time: 200ms
+    pin:
+      number: ${relay3_switch_pin}
+      inverted: false
+    on_turn_on: 
+      then:
+        - switch.turn_off: fan_speed0
+        - switch.turn_on: segment1
+        - switch.turn_on: segment3
+        - switch.turn_on: segment4
+        - switch.turn_on: segment6
+        - switch.turn_on: segment7
+    on_turn_off: 
+      then:
+        - switch.turn_off: segment1
+        - switch.turn_off: segment3
+        - switch.turn_off: segment4
+        - switch.turn_off: segment6
+        - switch.turn_off: segment7
+  - platform: gpio
+    name: Fan Speed4
+    id: fan_speed4
+    interlock: *interlock_group
+    interlock_wait_time: 200ms
+    pin:
+      number: ${relay4_switch_pin}
+      inverted: false
+    on_turn_on: 
+      then:
+        - switch.turn_off: fan_speed0
+        - switch.turn_on: segment2
+        - switch.turn_on: segment3
+        - switch.turn_on: segment4
+        - switch.turn_on: segment6
+    on_turn_off: 
+      then:
+        - switch.turn_off: segment2
+        - switch.turn_off: segment3
+        - switch.turn_off: segment4
+        - switch.turn_off: segment6
+  - platform: gpio
+    name: Light Switch
+    id: light_switch
+    pin:
+      number: ${light_switch_pin}
+      inverted: false
+#### 7-segment display
+  - platform: gpio
+    name: Segment1
+    id: segment1
+    pin:
+      number: ${segment1_pin}
+      inverted: false
+  - platform: gpio
+    name: Segment2
+    id: segment2
+    pin:
+      number: ${segment2_pin}
+      inverted: false
+  - platform: gpio
+    name: Segment3
+    id: segment3
+    pin:
+      number: ${segment3_pin}
+      inverted: false
+  - platform: gpio
+    name: Segment4
+    id: segment4
+    pin:
+      number: ${segment4_pin}
+      inverted: false
+  - platform: gpio
+    name: Segment5
+    id: segment5
+    pin:
+      number: ${segment5_pin}
+      inverted: false
+  - platform: gpio
+    name: Segment6
+    id: segment6
+    pin:
+      number: ${segment6_pin}
+      inverted: false
+  - platform: gpio
+    name: Segment7
+    id: segment7
+    pin:
+      number: ${segment7_pin}
+      inverted: false
+#### 7-segment display
+  - platform: template
+    name: "Auto Hood"
+    id: auto_hood
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      then:
+        - display.page.show: auto_mode_on
+        - delay: 2s
+        - display.page.show: main_page
+    turn_off_action:
+      then:
+        - display.page.show: auto_mode_off
+        - delay: 2s
+        - display.page.show: main_page
+  - platform: template
+    name: "Auto Light"
+    id: auto_light
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      then:
+        - display.page.show: auto_light_on
+        - delay: 2s
+        - display.page.show: main_page
+    turn_off_action:
+      then:
+        - display.page.show: auto_light_off
+        - delay: 2s
+        - display.page.show: main_page
+binary_sensor:
+  - platform: template
+    name: "High Temp"
+    id: high_temp
+    trigger_on_initial_state: true
+#    lambda: |-
+#      if (id(up_sensor).state > 0.01) {
+#        // Up moving
+#        return true;
+#      } else {
+#        // no moving
+#        return false;
+#      }
+    filters:
+      - delayed_on: 1s
+      - delayed_off: 1s
+    on_press:
+      then:
+        - if:       
+            condition:
+              and:
+                - switch.is_on: fan_speed1
+                - binary_sensor.is_on: gas_sensor
+                - switch.is_on: auto_hood
+            then:
+              - switch.turn_on: fan_speed2
+    on_release:
+      then:
+        - if:       
+            condition:
+              and:
+                - switch.is_on: auto_hood
+                - switch.is_on: fan_speed2
+                - binary_sensor.is_on: high_temp
+                - binary_sensor.is_on: gas_sensor
+            then:
+              - switch.turn_on: fan_speed1
+
+  - platform: gpio
+    pin:
+      number: ${gas_sensor_pin} # Вход датчиков холла
+      inverted: true
+    name: "Gas Sensor"
+    id: gas_sensor
+    filters:
+      - delayed_on: 100ms
+      - delayed_off: 500ms
+    on_press:
+      then:
+        - if:       
+            condition:
+              - switch.is_on: auto_hood
+            then:
+              - switch.turn_on: fan_speed1
+              - if:       
+                  condition:
+                    switch.is_on: auto_light
+                  then:
+                    - light.turn_on:
+                        id: ${friendly_name_short}
+                        effect: "None"
+                        brightness: 90%
+    on_release:
+      then:
+        - if:       
+            condition:
+              - switch.is_on: auto_hood
+            then:
+              - switch.turn_off: fan_speed1
+              - switch.turn_off: fan_speed2
+              - switch.turn_off: fan_speed3
+              - switch.turn_off: fan_speed4
+              - if:       
+                  condition:
+                    switch.is_on: auto_light
+                  then:
+                    - light.turn_on:
+                        id: ${friendly_name_short}
+                        effect: "Random Twinkle Effect With Custom Values"
+                        brightness: 80%
+  - platform: gpio
+    pin:
+      number: ${timer_button_pin} # Вход кнопки таймера
+      inverted: true
+    name: "Timer Button"
+    id: timer_button
+    filters:
+      - delayed_on: 100ms
+      - delayed_off: 500ms
+    on_press: 
+      then:
+        - light.turn_on: led_timer
+        - rtttl.play: 'short:d=4,o=5,b=100:16e6' # 'two_short:d=4,o=5,b=100:16e6,16e6'
+        - lambda: |-
+            // Увеличиваем шаг (циклически: 0→1→2→3→4→5→6→0)
+            id(timer_step) = (id(timer_step) + 1) % 7;
+            
+            // Вычисляем значение в минутах
+            int minutes = (id(timer_step) == 0) ? 0 : id(timer_step) * 10;
+            
+            // Устанавливаем новое значение number
+            id(timer_number).publish_state(minutes);
+            
+            // Логирование (опционально)
+            ESP_LOGI("timer", "Timer set to %d min", minutes);
+
+  - platform: gpio
+    pin:
+      number: ${down_button_pin} # Вход кнопки вниз
+      inverted: true
+    name: "Down Button"
+    id: down_button
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 300ms
+    on_press: 
+      then:
+        - lambda: |-
+            if (!id(fan_speed0).state && !id(fan_speed1).state && !id(fan_speed2).state && !id(fan_speed3).state && !id(fan_speed4).state) {
+              id(fan_speed1).turn_on();
+            } else if (id(fan_speed1).state) {
+              id(fan_speed0).turn_on();
+            } else if (id(fan_speed2).state) {
+              id(fan_speed1).turn_on();
+            } else if (id(fan_speed3).state) {
+              id(fan_speed2).turn_on();
+            } else if (id(fan_speed4).state) {
+              id(fan_speed3).turn_on();
+            } else {
+              id(fan_speed0).turn_on();
+            }
+        - rtttl.play: 'short:d=4,o=5,b=100:16e6' # 'two_short:d=4,o=5,b=100:16e6,16e6'
+        - light.turn_on: led_down
+        - delay: ${led_delay_time}
+        - light.turn_off: led_down
+    on_multi_click:
+    - timing: # Одиночное длительное нажатие
+        - ON for 2s to 5s
+        - OFF for at least 0.5s
+      then:
+        - switch.toggle: auto_hood
+  - platform: gpio
+    pin:
+      number: ${up_button_pin} # Вход кнопки вверх
+      inverted: true
+    name: "Up Button"
+    id: up_button
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 300ms
+    on_press: 
+      then:
+        - lambda: |-
+            if (!id(fan_speed0).state && !id(fan_speed1).state && !id(fan_speed2).state && !id(fan_speed3).state && !id(fan_speed4).state) {
+              id(fan_speed1).turn_on();
+            } else if (id(fan_speed1).state) {
+              id(fan_speed2).turn_on();
+            } else if (id(fan_speed2).state) {
+              id(fan_speed3).turn_on();
+            } else if (id(fan_speed3).state) {
+              id(fan_speed4).turn_on();
+            } else if (id(fan_speed4).state) {
+              id(fan_speed4).turn_off();
+              id(fan_speed0).turn_on();
+            } else {
+              id(fan_speed0).turn_on();
+            }
+        - rtttl.play: 'short:d=4,o=5,b=100:16e6' # 'two_short:d=4,o=5,b=100:16e6,16e6'
+        - light.turn_on: led_up
+        - delay: ${led_delay_time}
+        - light.turn_off: led_up
+    on_multi_click:
+    - timing: # Одиночное длительное нажатие
+        - ON for 2s to 5s
+        - OFF for at least 0.5s
+      then:
+        - switch.toggle: auto_hood
+  - platform: gpio
+    pin:
+      number: ${light_button_pin} # Вход кнопки подсветки
+      inverted: true
+    name: "Light Button"
+    id: light_button
+    filters:
+      - delayed_on: 100ms
+      - delayed_off: 500ms
+    on_press: 
+      then:
+        - rtttl.play: 'short:d=4,o=5,b=100:16e6' # 'two_short:d=4,o=5,b=100:16e6,16e6'
+        - if:
+            condition:
+              switch.is_off: light_switch
+            then:
+              - switch.turn_on: light_switch
+              - light.turn_on: led_light
+            else:
+              - switch.turn_off: light_switch
+              - light.turn_off: led_light
+    on_multi_click:
+    - timing: # Одиночное длительное нажатие
+        - ON for 2s to 5s
+        - OFF for at least 0.5s
+      then:
+        - switch.toggle: auto_light
+        - delay: 500ms
+        - if:       
+            condition:
+              switch.is_on: auto_light
+            then:
+              - light.turn_on:
+                  id: ${friendly_name_short}
+                  effect: "None"
+                  brightness: 90%
+            else:
+              - light.turn_off:
+                  id: ${friendly_name_short}
+
+  - platform: template
+    id: timer_state
+    name: Timer State
+    icon: "mdi:clock-check"
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_press: 
+      then:
+        - script.execute: dinamic_timer
+    on_release:
+      then:
+        - delay: 2s
+        - light.turn_off: led_timer
+        - display.page.show: main_page
+
+light:
+  - !include attach/common/light/rtm_light_ws2812.yaml
+  - platform: monochromatic
+    output: led_timer_output              #  Подсветка кнопки таймера
+    name: "Led Timer"
+    id: led_timer
+    default_transition_length: 0s
+  - platform: monochromatic
+    output: led_down_output              #  Подсветка кнопки "вниз"
+    name: "Led Down"
+    id: led_down
+    default_transition_length: 0s
+  - platform: monochromatic
+    output: led_up_output              #  Подсветка кнопки "вверх"
+    name: "Led Up"
+    id: led_up
+    default_transition_length: 0s
+  - platform: monochromatic
+    output: led_light_output              #  Подсветка кнопки подсветки
+    name: "Led Light"
+    id: led_light
+    default_transition_length: 0s
+
+output:
+  - platform: ledc
+    pin: ${led_timer_pin}
+    id: led_timer_output
+    min_power: 0.02
+  - platform: ledc
+    pin: ${led_down_pin}
+    id: led_down_output
+    min_power: 0.01
+  - platform: ledc
+    pin: ${led_up_pin}
+    id: led_up_output
+    min_power: 0.02
+  - platform: ledc
+    pin: ${led_light_pin}
+    id: led_light_output
+    min_power: 0.02
+  - platform: ledc
+    pin: ${rtttl_pin}
+    inverted: true
+    id: rtttl_out
+font:
+  - file: "fonts/arial.ttf"
+    id: arial_12
+    size: 12
+    glyphs: |-
+      |#~*<>!'"%/()+=,-_.:°0123456789АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЬЫЪЭЮЯABCDEFGHIJKLMNOPQRSTUVWXYZ абвгдеёжзийклмнопрстуфхцчшщьыъэюяabcdefghijklmnopqrstuvwxyz
+  - file: "fonts/arial.ttf"
+    id: arial_24
+    size: 24
+    glyphs: |-
+      |#~*<>!'"%/()+=,-_.:°0123456789АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЬЫЪЭЮЯABCDEFGHIJKLMNOPQRSTUVWXYZ абвгдеёжзийклмнопрстуфхцчшщьыъэюяabcdefghijklmnopqrstuvwxyz
+  - file: "fonts/icons_v2.ttf"
+    id: icons_12
+    size: 12
+    bpp: 4
+    glyphs: [
+      "\U0000e91f", # стрелка вверх
+      "\U0000e920", # стрелка вниз
+      "\U0000e926", # fan
+      "\U0000e938", # humidity 
+      "\U0000e939", # temperature 
+      "\U0000e931", # wifi signal from 25% to 1%
+      "\U0000e932", # wifi signal from 50% to 25%
+      "\U0000e933", # wifi signal from 75% to 50%
+      "\U0000e934", # wifi signal from 100% to 75% or disable
+    ]
+
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    address: 0x3C
+    i2c_id: bus_a
+    id: my_display
+    pages:
+      - id: main_page
+        lambda: |-
+          it.print(2, 0, id(arial_12), TextAlign::TOP_LEFT, "ParusSmart");
+          if (id(ds18_in).has_state()) {it.printf(14, 18, id(arial_24),"%.1f°", id(ds18_out).state); }
+          if (id(ds18_out).has_state()) {it.printf(70, 30, id(arial_24),"%.1f°", id(ds18_in).state); }
+          it.printf(0, 24, id(icons_12), "${up_icon}");
+          it.printf(60, 36, id(icons_12), "${down_icon}");
+          it.printf(2, 53, id(arial_12), TextAlign::TOP_LEFT, "uptime: %s", id(uptime_human).state.c_str());
+          // === ИНДИКАТОР WIFI (правый верхний угол) ===
+          {
+            auto signal = id(wifi_signal_percent).state;
+            std::string icon;
+
+            // Выбор иконки по уровню сигнала
+            if (signal > 0 && signal < 26) {
+              icon = "${wifi_25_icon}";
+            } else if (signal > 25 && signal < 51) {
+              icon = "${wifi_50_icon}";
+            } else if (signal > 50 && signal < 76) {
+              icon = "${wifi_75_icon}";
+            } else if (signal > 75) {
+              icon = "${wifi_100_icon}";
+            } else {
+              icon = "${wifi_100_icon}";
+            }
+
+            // Выводим иконку + процент (пример: 📶 78%)
+            // Координаты: X=80 (правее), Y=0 (верх)
+            char buffer[16];
+            //snprintf(buffer, sizeof(buffer), "%s %.0f%%", icon.c_str(), signal);
+            it.print(80, 0, id(icons_12), icon.c_str());
+          }
+          it.printf(95, 0, id(arial_12), TextAlign::TOP_LEFT, "%.0f%%", id(wifi_signal_percent).state);
+      - id: timer
+        lambda: |-
+          it.print(30, 0, id(arial_12), TextAlign::TOP_LEFT, "Т А Й М Е Р");
+          it.printf(15, 18, id(arial_24), "%.0f минут", id(timer_number).state); // установка длительности таймера
+          it.printf(30, 42, id(arial_24), TextAlign::TOP_LEFT, "%s", id(timer_remaining).state.c_str());
+      - id: auto_mode_on
+        lambda: |-
+          it.print(2, 0, id(arial_12), TextAlign::TOP_LEFT, "ParusSmart");
+          it.print(25, 16, id(arial_24), TextAlign::TOP_LEFT, "АВТО");
+          it.print(15, 42, id(arial_24), TextAlign::TOP_LEFT, "РЕЖИМ");
+      - id: auto_mode_off
+        lambda: |-
+          it.print(2, 0, id(arial_12), TextAlign::TOP_LEFT, "ParusSmartHome");
+          it.print(5, 16, id(arial_24), TextAlign::TOP_LEFT, "РУЧНОЙ");
+          it.print(15, 42, id(arial_24), TextAlign::TOP_LEFT, "РЕЖИМ");
+      - id: auto_light_on
+        lambda: |-
+          it.print(2, 0, id(arial_12), TextAlign::TOP_LEFT, "ParusSmartHome");
+          it.print(0, 16, id(arial_24), TextAlign::TOP_LEFT, "Подсветка");
+          it.print(25, 42, id(arial_24), TextAlign::TOP_LEFT, "АВТО");
+      - id: auto_light_off
+        lambda: |-
+          it.print(2, 0, id(arial_12), TextAlign::TOP_LEFT, "ParusSmart");
+          it.print(0, 16, id(arial_24), TextAlign::TOP_LEFT, "Подсветка");
+          it.print(0, 42, id(arial_24), TextAlign::TOP_LEFT, "выключена");
+number:
+  - platform: template
+    name: "Brightness" # Установка яркости
+    id: brightness
+    optimistic: true
+    min_value: 0
+    max_value: 100
+    step: 20
+    initial_value: 80
+    unit_of_measurement: "%"
+    restore_value: true
+    on_value:
+      then:
+        lambda: |-
+          id(my_display).set_contrast(x / 100.0);
+  - platform: template
+    name: "Timer Duration"
+    id: timer_number
+    icon: "mdi:clock-check-outline"
+    optimistic: true
+    restore_value: true
+    unit_of_measurement: min
+#    mode: box
+    min_value: 0
+    max_value: 60
+    step: 10  # Шаг 10 мин (чтобы избежать промежуточных значений)
+    # Обработчик изменения (если нужно реагировать на ручное изменение)
+    on_value: 
+      then:
+        - lambda: |-
+            // Если значение таймера > 0 → включаем timer_state
+            if (x > 0) {
+              id(timer_state).publish_state(true);
+              id(dinamic_timer).execute();
+              id(timer_tick).execute();
+            } else {
+              // Если 0 → выключаем timer_state
+              id(timer_state).publish_state(false);
+              id(dinamic_timer).stop();
+              id(timer_tick).stop();
+              id(led_timer).turn_off();
+            }
+        - if:
+            condition:
+              - script.is_running: dinamic_timer
+            then:
+              - script.stop: dinamic_timer
+              - script.stop: timer_tick
+              - script.execute: dinamic_timer
+              - script.execute: timer_tick
+        - globals.set:
+            id: timer_duration_value
+            value: !lambda return (int) x * 60;
+
+script:
+  - id: dinamic_timer
+    then:
+      - if:
+          condition:
+            - binary_sensor.is_on: timer_state
+          then:
+            - display.page.show: timer
+#            - globals.set:
+#                id: timer_duration_value
+#                value: !lambda return id(timer_number).state * 60;
+#            - script.execute: timer_tick
+            - delay: !lambda |-
+                return (int) id(timer_number).state * 60 * 1000;  // Переводим секунды в миллисекунды 
+            - lambda: !lambda |-
+                id(timer_state).publish_state(false);
+            - script.stop: timer_tick
+            - lambda: |-
+                id(fan_speed1).turn_off();
+                id(fan_speed2).turn_off();
+                id(fan_speed3).turn_off();
+                id(fan_speed4).turn_off();
+            - display.page.show: main_page
+            - light.turn_off: led_timer
+  - id: timer_tick
+    # Перезапускается каждую секунду, пока не остановим командой timer.stop()
+    mode: queued
+    then:
+      # каждый tick это 1 секунда
+      - delay: 1s
+      - lambda: |-
+          id(timer_duration_value) -= 1;
+      - if:
+          condition:
+            lambda: return id(timer_state).state;
+          then:
+            - script.execute: timer_tick
+
+interval:
+  - interval: 1s
+    then:
+      if:
+        condition:
+          lambda: 'return id(timer_state).state;'
+        then:
+          - text_sensor.template.publish:
+              id: timer_remaining
+              state: !lambda |-
+                char buff[20];
+                int _remaining_sec = id(timer_duration_value);
+                int hr = _remaining_sec / 3600;
+                int min = (_remaining_sec % 3600) / 60;
+                int sec = _remaining_sec % 60;
+                snprintf(buff, sizeof(buff), "%02d:%02d", min, sec);
+                return {buff};
+text_sensor:
+# Отображение реального времени, оставшегося в таймере
+  - name: "Timer Remaining"
+    id: timer_remaining
+    platform: template
+    icon: "mdi:clock-end"
+    update_interval: never
