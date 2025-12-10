@@ -1,7 +1,7 @@
 # Parus-Hood: Умная Автоматизированная Кухонная вытяжка на ESPHome
 
 ![ESPHome Logo](roller-blind-img/esphome1.png) ![Home Assistant Logo](https://avatars.githubusercontent.com/u/13844975?s=200&v=4) 
-[внешний вид](img/main.jpg)
+![внешний вид](img/main.jpg)
 <p align="center">
     <img alt="Static Badge" src="https://img.shields.io/badge/made%20by-ParusSmartHome-blue">
     <img alt="Static Badge" src="https://img.shields.io/badge/version-v2.0%20Beta-green">
