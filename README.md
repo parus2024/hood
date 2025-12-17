@@ -51,6 +51,7 @@
 - [блок управления2](img/2.png)
 - [ручки с датчиками Холла ](img/sensors.jpg)
 - [Видео#1 YOUTUBE](https://youtu.be/nVWKVWntuA0)
+- [задержка отключение YOUTUBE](https://youtube.com/shorts/1p3CA9Y-cTQ)
 
 ---
 
